@@ -38,7 +38,7 @@ struct ResetPacket
 {
 	float playerXPosition;
 	float playerYPosition;
-	bool isIt;
+	unsigned char itPlayerColorAndID[ 3 ];
 	//Player orientation should always start at 0 (east)
 	unsigned char playerColorAndID[ 3 ];
 };

@@ -39,7 +39,7 @@ const double SECONDS_BEFORE_SEND_UPDATE_PACKET = 0.1;
 const unsigned short PORT_NUMBER = 5000;
 //const std::string IP_ADDRESS = "129.119.142.83";
 const std::string IP_ADDRESS = "127.0.0.1";
-const std::string FLAG_TEXTURE_FILE_PATH = "../Data/Images/Flag.png";
+const std::string IT_TEXTURE_FILE_PATH = "../Data/Images/It.png";
 const std::string PLAYER_TEXTURE_FILE_PATH = "../Data/Images/Player.png";
 
 
@@ -74,6 +74,7 @@ private:
 	Camera						m_camera;
 	Vector2						m_size;
 	Texture*					m_playerTexture;
+	Texture*					m_itTexture;
 	UDPClient					m_client;
 	bool						m_isConnectedToServer;
 	unsigned int				m_nextPacketNumber;

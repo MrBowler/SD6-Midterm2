@@ -21,6 +21,7 @@ void World::Initialize()
 	InitializeTime();
 	m_client.ConnectToServer( IP_ADDRESS, PORT_NUMBER );
 	m_playerTexture = Texture::CreateOrGetTexture( PLAYER_TEXTURE_FILE_PATH );
+	m_itTexture = Texture::CreateOrGetTexture( IT_TEXTURE_FILE_PATH );
 	m_secondsSinceLastInitSend = GetCurrentTimeSeconds();
 
 	m_mainPlayer = new Player;
@@ -132,12 +133,26 @@ void World::ResetGame( const CS6Packet& resetPacket )
 	m_mainPlayer->m_color.r = resetPacket.data.reset.playerColorAndID[0];
 	m_mainPlayer->m_color.g = resetPacket.data.reset.playerColorAndID[1];
 	m_mainPlayer->m_color.b = resetPacket.data.reset.playerColorAndID[2];
-	m_mainPlayer->m_isIt = resetPacket.data.reset.isIt;
 	m_mainPlayer->m_currentPosition.x = resetPacket.data.reset.playerXPosition;
 	m_mainPlayer->m_currentPosition.y = resetPacket.data.reset.playerYPosition;
 	m_mainPlayer->m_gotoPosition = m_mainPlayer->m_currentPosition;
 	m_mainPlayer->m_currentVelocity = Vector2( 0.f, 0.f );
 	m_mainPlayer->m_orientationDegrees = 0.f;
+
+	for( unsigned int playerIndex = 0; playerIndex < m_players.size(); ++playerIndex )
+	{
+		Player* player = m_players[ playerIndex ];
+		if( player->m_color.r == resetPacket.data.reset.itPlayerColorAndID[0]
+			&& player->m_color.g == resetPacket.data.reset.itPlayerColorAndID[1]
+			&& player->m_color.b == resetPacket.data.reset.itPlayerColorAndID[2] )
+		{
+			player->m_isIt = true;
+		}
+		else
+		{
+			player->m_isIt = false;
+		}
+	}
 
 	CS6Packet ackPacket;
 	ackPacket.packetNumber = m_nextPacketNumber;
@@ -403,7 +418,6 @@ void World::ReceivePackets()
 void World::RenderPlayers()
 {
 	OpenGLRenderer::EnableTexture2D();
-	OpenGLRenderer::BindTexture2D( m_playerTexture->m_openglTextureID );
 
 	for( unsigned int playerIndex = 0; playerIndex < m_players.size(); ++playerIndex )
 	{
@@ -417,6 +431,7 @@ void World::RenderPlayers()
 		OpenGLRenderer::SetColor3f( colorR, colorG, colorB );
 		OpenGLRenderer::Translatef( player->m_currentPosition.x, player->m_currentPosition.y, 0.f );
 		OpenGLRenderer::Rotatef( -player->m_orientationDegrees, 0.f, 0.f, 1.f );
+		OpenGLRenderer::BindTexture2D( m_playerTexture->m_openglTextureID );
 
 		OpenGLRenderer::BeginRender( QUADS );
 		{
@@ -435,6 +450,33 @@ void World::RenderPlayers()
 		OpenGLRenderer::EndRender();
 
 		OpenGLRenderer::PopMatrix();
+
+		if( player->m_isIt )
+		{
+			OpenGLRenderer::PushMatrix();
+
+			OpenGLRenderer::SetColor3f( 1.f, 1.f, 1.f );
+			OpenGLRenderer::Translatef( player->m_currentPosition.x, player->m_currentPosition.y, 0.f );
+			OpenGLRenderer::BindTexture2D( m_itTexture->m_openglTextureID );
+
+			OpenGLRenderer::BeginRender( QUADS );
+			{
+				OpenGLRenderer::SetTexCoords2f( 0.5f, 0.5f );
+				OpenGLRenderer::SetVertex2f( -ONE_HALF_POINT_SIZE_PIXELS, -ONE_HALF_POINT_SIZE_PIXELS );
+
+				OpenGLRenderer::SetTexCoords2f( 1.f, 0.5f );
+				OpenGLRenderer::SetVertex2f( ONE_HALF_POINT_SIZE_PIXELS, -ONE_HALF_POINT_SIZE_PIXELS );
+
+				OpenGLRenderer::SetTexCoords2f( 1.f, 0.f );
+				OpenGLRenderer::SetVertex2f( ONE_HALF_POINT_SIZE_PIXELS, ONE_HALF_POINT_SIZE_PIXELS );
+
+				OpenGLRenderer::SetTexCoords2f( 0.5f, 0.f );
+				OpenGLRenderer::SetVertex2f( -ONE_HALF_POINT_SIZE_PIXELS, ONE_HALF_POINT_SIZE_PIXELS );
+			}
+			OpenGLRenderer::EndRender();
+
+			OpenGLRenderer::PopMatrix();
+		}
 	}
 
 	OpenGLRenderer::BindTexture2D( 0 );

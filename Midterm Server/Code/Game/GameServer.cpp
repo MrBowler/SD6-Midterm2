@@ -128,17 +128,17 @@ Vector2 GameServer::GetRandomPosition()
 
 
 //-----------------------------------------------------------------------------------------------
-bool GameServer::IsThisPlayerIt( const Player* player )
+Player* GameServer::GetItPlayer()
 {
 	std::map< ClientInfo, Player* >::iterator playerIter;
 	for( playerIter = m_players.begin(); playerIter != m_players.end(); ++playerIter )
 	{
-		Player* checkPlayer = playerIter->second;
-		if( player != checkPlayer && checkPlayer->m_isIt )
-			return false;
+		Player* player = playerIter->second;
+		if( player->m_isIt )
+			return player;
 	}
 
-	return true;
+	return nullptr;
 }
 
 
@@ -187,8 +187,13 @@ void GameServer::AddPlayer( const ClientInfo& info )
 	player->m_position = GetPlayerPosition( player->m_color );
 	player->m_velocity = Vector2( 0.f, 0.f );
 	player->m_orientationDegrees = 0.f;
-	player->m_isIt = IsThisPlayerIt( player );
 	player->m_lastUpdateTime = GetCurrentTimeSeconds();
+
+	Player* itPlayer = GetItPlayer();
+	if( player == itPlayer )
+		player->m_isIt = true;
+	else
+		player->m_isIt = false;
 
 	m_players[ info ] = player;
 
@@ -199,12 +204,18 @@ void GameServer::AddPlayer( const ClientInfo& info )
 	resetPacket.playerColorAndID[1] = player->m_color.g;
 	resetPacket.playerColorAndID[2] = player->m_color.b;
 	resetPacket.timestamp = GetCurrentTimeSeconds();
-	resetPacket.data.reset.isIt = player->m_isIt;
 	resetPacket.data.reset.playerXPosition = player->m_position.x;
 	resetPacket.data.reset.playerYPosition = player->m_position.y;
 	resetPacket.data.reset.playerColorAndID[0] = player->m_color.r;
 	resetPacket.data.reset.playerColorAndID[1] = player->m_color.g;
 	resetPacket.data.reset.playerColorAndID[2] = player->m_color.b;
+
+	if( itPlayer == nullptr )
+		itPlayer = player;
+	
+	resetPacket.data.reset.itPlayerColorAndID[0] = itPlayer->m_color.r;
+	resetPacket.data.reset.itPlayerColorAndID[1] = itPlayer->m_color.g;
+	resetPacket.data.reset.itPlayerColorAndID[2] = itPlayer->m_color.b;
 
 	SendPacketToClient( resetPacket, info, true );
 }
@@ -240,17 +251,9 @@ void GameServer::ResetGame( const CS6Packet& victoryPacket, const ClientInfo& in
 		resetPacket.data.reset.playerColorAndID[2] = player->m_color.b;
 		resetPacket.data.reset.playerXPosition = resetPlayerPos.x;
 		resetPacket.data.reset.playerYPosition = resetPlayerPos.y;
-
-		if( victoryPacket.data.victorious.playerColorAndID[0] == player->m_color.r
-			&& victoryPacket.data.victorious.playerColorAndID[1] == player->m_color.g
-			&& victoryPacket.data.victorious.playerColorAndID[2] == player->m_color.b )
-		{
-			resetPacket.data.reset.isIt = true;
-		}
-		else
-		{
-			resetPacket.data.reset.isIt = false;
-		}
+		resetPacket.data.reset.itPlayerColorAndID[0] = victoryPacket.data.victorious.playerColorAndID[0];
+		resetPacket.data.reset.itPlayerColorAndID[1] = victoryPacket.data.victorious.playerColorAndID[1];
+		resetPacket.data.reset.itPlayerColorAndID[2] = victoryPacket.data.victorious.playerColorAndID[2];
 
 		SendPacketToClient( resetPacket, playerIter->first, true );
 	}
