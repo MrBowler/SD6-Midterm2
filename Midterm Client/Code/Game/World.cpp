@@ -9,6 +9,7 @@ World::World( float worldWidth, float worldHeight )
 	: m_size( worldWidth, worldHeight )
 	, m_playerTexture( nullptr )
 	, m_isConnectedToServer( false )
+	, m_nextPacketNumber( 0 )
 {
 
 }
@@ -61,6 +62,7 @@ void World::Update( float deltaSeconds, const Keyboard& keyboard, const Mouse& m
 {
 	UpdateFromInput( keyboard, mouse, deltaSeconds );
 	ReceivePackets();
+	SendUpdate();
 }
 
 
@@ -79,9 +81,28 @@ void World::RenderObjects2D()
 
 
 //-----------------------------------------------------------------------------------------------
-void World::SendPacket( const CS6Packet& packet )
+void World::SendPacket( const CS6Packet& packet, bool requireAck )
 {
 	m_client.SendPacketToServer( (const char*) &packet, sizeof( packet ) );
+	++m_nextPacketNumber;
+
+	if( requireAck )
+	{
+		m_sentPackets.push_back( packet );
+	}
+}
+
+
+//-----------------------------------------------------------------------------------------------
+void World::SendJoinGamePacket()
+{
+	CS6Packet joinPacket;
+	joinPacket.packetNumber = m_nextPacketNumber;
+	joinPacket.packetType = TYPE_Acknowledge;
+	joinPacket.timestamp = GetCurrentTimeSeconds();
+	joinPacket.data.acknowledged.packetType = TYPE_Acknowledge;
+
+	SendPacket( joinPacket, true );
 }
 
 
@@ -98,6 +119,18 @@ void World::ResetGame( const CS6Packet& resetPacket )
 	m_mainPlayer->m_gotoPosition = m_mainPlayer->m_currentPosition;
 	m_mainPlayer->m_currentVelocity = Vector2( 0.f, 0.f );
 	m_mainPlayer->m_orientationDegrees = 0.f;
+
+	CS6Packet ackPacket;
+	ackPacket.packetNumber = m_nextPacketNumber;
+	ackPacket.packetType = TYPE_Acknowledge;
+	ackPacket.playerColorAndID[0] = m_mainPlayer->m_color.r;
+	ackPacket.playerColorAndID[1] = m_mainPlayer->m_color.g;
+	ackPacket.playerColorAndID[2] = m_mainPlayer->m_color.b;
+	ackPacket.timestamp = GetCurrentTimeSeconds();
+	ackPacket.data.acknowledged.packetNumber = resetPacket.packetNumber;
+	ackPacket.data.acknowledged.packetType = TYPE_Reset;
+
+	SendPacket( ackPacket, false );
 }
 
 
@@ -211,6 +244,13 @@ void World::UpdateFromInput( const Keyboard& keyboard, const Mouse&, float delta
 //-----------------------------------------------------------------------------------------------
 void World::SendUpdate()
 {
+	if( !m_isConnectedToServer && ( m_secondsSinceLastInitSend > SECONDS_BEFORE_RESEND_INIT_PACKET ) )
+	{
+		SendJoinGamePacket();
+		m_secondsSinceLastInitSend = GetCurrentTimeSeconds();
+		return;
+	}
+	
 	CS6Packet updatePacket;
 	updatePacket.packetType = TYPE_Update;
 	updatePacket.playerColorAndID[0] = m_mainPlayer->m_color.r;
@@ -223,7 +263,7 @@ void World::SendUpdate()
 	updatePacket.data.updated.yVelocity = m_mainPlayer->m_currentVelocity.y;
 	updatePacket.data.updated.yawDegrees = m_mainPlayer->m_orientationDegrees;
 
-	SendPacket( updatePacket );
+	SendPacket( updatePacket, false );
 }
 
 
@@ -231,16 +271,25 @@ void World::SendUpdate()
 void World::ReceivePackets()
 {
 	CS6Packet packet;
+	std::set< CS6Packet > recvPackets;
 
 	while( m_client.ReceivePacketFromServer( (char*) &packet, sizeof( packet ) ) )
 	{
-		if( packet.packetType == TYPE_Update )
+		recvPackets.insert( packet );
+	}
+
+	std::set< CS6Packet >::iterator setIter;
+	for( setIter = recvPackets.begin(); setIter != recvPackets.end(); ++setIter )
+	{
+		CS6Packet orderedPacket = *setIter;
+
+		if( orderedPacket.packetType == TYPE_Update )
 		{
-			UpdatePlayer( packet );
+			UpdatePlayer( orderedPacket );
 		}
-		else if( packet.packetType == TYPE_Reset )
+		else if( orderedPacket.packetType == TYPE_Reset )
 		{
-			ResetGame( packet );
+			ResetGame( orderedPacket );
 		}
 	}
 }

@@ -36,8 +36,6 @@ struct AckPacket
 //-----------------------------------------------------------------------------------------------
 struct ResetPacket
 {
-	float flagXPosition;
-	float flagYPosition;
 	float playerXPosition;
 	float playerYPosition;
 	//Player orientation should always start at 0 (east)
@@ -68,6 +66,8 @@ struct VictoryPacket
 //-----------------------------------------------------------------------------------------------
 struct CS6Packet
 {
+	bool operator<( const CS6Packet& other ) const;
+
 	PacketType packetType;
 	unsigned char playerColorAndID[ 3 ];
 	unsigned int packetNumber;
@@ -80,5 +80,13 @@ struct CS6Packet
 		VictoryPacket victorious;
 	} data;
 };
+
+
+//-----------------------------------------------------------------------------------------------
+inline bool CS6Packet::operator<( const CS6Packet& other ) const
+{
+	return this->packetNumber < other.packetNumber;
+}
+
 
 #endif //INCLUDED_CS6_PACKET_HPP

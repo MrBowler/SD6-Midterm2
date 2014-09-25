@@ -9,6 +9,9 @@ void GameServer::Initalize()
 	InitializeTime();
 	m_server.StartServer( PORT_NUMBER );
 
+	m_nextPacketNumber = 0;
+	m_lastUpdateTime = GetCurrentTimeSeconds();
+
 	std::cout << "Server is up and running\n";
 }
 
@@ -17,27 +20,43 @@ void GameServer::Initalize()
 void GameServer::Update()
 {
 	GetPackets();
+	SendUpdatesToClients();
+	ResendAckPackets();
 }
 
 
 //-----------------------------------------------------------------------------------------------
-void GameServer::SendPacketToClient( const CS6Packet& pkt, const ClientInfo& info )
+void GameServer::SendPacketToClient( const CS6Packet& pkt, const ClientInfo& info, bool requireAck )
 {
 	struct sockaddr_in clientAddr;
 	clientAddr.sin_family = AF_INET;
 	clientAddr.sin_addr.s_addr = inet_addr( info.m_ipAddress );
 	clientAddr.sin_port = info.m_portNumber;
 	m_server.SendPacketToClient( (const char*) &pkt, sizeof( pkt ), clientAddr );
+	++m_nextPacketNumber;
+
+	if( requireAck )
+	{
+		std::vector< CS6Packet > sentPackets;
+		std::map< ClientInfo, std::vector< CS6Packet > >::iterator vecIter = m_sendPacketsPerClient.find( info );
+		if( vecIter != m_sendPacketsPerClient.end() )
+		{
+			sentPackets = vecIter->second;
+		}
+
+		sentPackets.push_back( pkt );
+		m_sendPacketsPerClient[ info ] = sentPackets;
+	}
 }
 
 
 //-----------------------------------------------------------------------------------------------
-void GameServer::SendPacketToAllClients( const CS6Packet& pkt )
+void GameServer::SendPacketToAllClients( const CS6Packet& pkt, bool requireAck )
 {
 	std::map< ClientInfo, Player* >::iterator playerIter;
 	for( playerIter = m_players.begin(); playerIter != m_players.end(); ++playerIter )
 	{
-		SendPacketToClient( pkt, playerIter->first );
+		SendPacketToClient( pkt, playerIter->first, requireAck );
 	}
 }
 
@@ -109,6 +128,32 @@ Vector2 GameServer::GetRandomPosition()
 
 
 //-----------------------------------------------------------------------------------------------
+void GameServer::ProcessAckPackets( const CS6Packet& ackPacket, const ClientInfo& info )
+{
+	if( ackPacket.data.acknowledged.packetType == TYPE_Acknowledge )
+	{
+		AddPlayer( info );
+	}
+
+	std::map< ClientInfo, std::vector< CS6Packet > >::iterator vecIter = m_sendPacketsPerClient.find( info );
+	if( vecIter != m_sendPacketsPerClient.end() )
+	{
+		std::vector< CS6Packet > sentPackets = vecIter->second;
+		for( unsigned int packetIndex = 0; packetIndex < sentPackets.size(); ++packetIndex )
+		{
+			CS6Packet packet = sentPackets[ packetIndex ];
+			if( packet.packetNumber == ackPacket.data.acknowledged.packetNumber )
+			{
+				sentPackets.erase( sentPackets.begin() + packetIndex );
+				m_sendPacketsPerClient[ info ] = sentPackets;
+				break;
+			}
+		}
+	}
+}
+
+
+//-----------------------------------------------------------------------------------------------
 void GameServer::AddPlayer( const ClientInfo& info )
 {
 	Player* player;
@@ -130,6 +175,21 @@ void GameServer::AddPlayer( const ClientInfo& info )
 	player->m_lastUpdateTime = GetCurrentTimeSeconds();
 
 	m_players[ info ] = player;
+
+	CS6Packet resetPacket;
+	resetPacket.packetNumber = m_nextPacketNumber;
+	resetPacket.packetType = TYPE_Reset;
+	resetPacket.playerColorAndID[0] = player->m_color.r;
+	resetPacket.playerColorAndID[1] = player->m_color.g;
+	resetPacket.playerColorAndID[2] = player->m_color.b;
+	resetPacket.timestamp = GetCurrentTimeSeconds();
+	resetPacket.data.reset.playerXPosition = player->m_position.x;
+	resetPacket.data.reset.playerYPosition = player->m_position.y;
+	resetPacket.data.reset.playerColorAndID[0] = player->m_color.r;
+	resetPacket.data.reset.playerColorAndID[1] = player->m_color.g;
+	resetPacket.data.reset.playerColorAndID[2] = player->m_color.b;
+
+	SendPacketToClient( resetPacket, info, true );
 }
 
 
@@ -152,11 +212,15 @@ void GameServer::UpdatePlayer( const CS6Packet& updatePacket, const ClientInfo& 
 //-----------------------------------------------------------------------------------------------
 void GameServer::SendUpdatesToClients()
 {
+	if( ( GetCurrentTimeSeconds() - m_lastUpdateTime ) < SECONDS_BEFORE_SEND_UPDATE )
+		return;
+
 	std::map< ClientInfo, Player* >::iterator playerIter;
 	for( playerIter = m_players.begin(); playerIter != m_players.end(); ++playerIter )
 	{
 		Player* player = playerIter->second;
 		CS6Packet updatePacket;
+		updatePacket.packetNumber = m_nextPacketNumber;
 		updatePacket.packetType = TYPE_Update;
 		updatePacket.playerColorAndID[0] = player->m_color.r;
 		updatePacket.playerColorAndID[1] = player->m_color.g;
@@ -168,8 +232,10 @@ void GameServer::SendUpdatesToClients()
 		updatePacket.data.updated.yVelocity = player->m_velocity.y;
 		updatePacket.data.updated.yawDegrees = player->m_orientationDegrees;
 
-		SendPacketToAllClients( updatePacket );
+		SendPacketToAllClients( updatePacket, false );
 	}
+
+	m_lastUpdateTime = GetCurrentTimeSeconds();
 }
 
 
@@ -181,10 +247,51 @@ void GameServer::GetPackets()
 	clientAddr.sin_family = AF_INET;
 	int clientLen = sizeof( clientAddr );
 
+	std::set< CS6Packet > recvPackets;
+	std::map< CS6Packet, ClientInfo > infoByPacket;
 	while( m_server.ReceivePacketFromClient( (char*) &pkt, sizeof( pkt ), clientAddr, clientLen ) )
 	{
 		ClientInfo info;
 		info.m_ipAddress = inet_ntoa( clientAddr.sin_addr );
 		info.m_portNumber = clientAddr.sin_port;
+
+		recvPackets.insert( pkt );
+		infoByPacket[ pkt ] = info;
+	}
+
+	std::set< CS6Packet >::iterator setIter;
+	for( setIter = recvPackets.begin(); setIter != recvPackets.end(); ++setIter )
+	{
+		CS6Packet orderedPacket = *setIter;
+		ClientInfo info = infoByPacket[ orderedPacket ];
+
+		if( orderedPacket.packetType == TYPE_Acknowledge )
+		{
+			ProcessAckPackets( orderedPacket, info );
+		}
+		else if( orderedPacket.packetType == TYPE_Update )
+		{
+			UpdatePlayer( orderedPacket, info );
+		}
+	}
+}
+
+
+//-----------------------------------------------------------------------------------------------
+void GameServer::ResendAckPackets()
+{
+	std::map< ClientInfo, std::vector< CS6Packet > >::iterator vecIter;
+	for( vecIter = m_sendPacketsPerClient.begin(); vecIter != m_sendPacketsPerClient.end(); ++vecIter )
+	{
+		std::vector< CS6Packet > sentPackets = vecIter->second;
+		for( unsigned int packetIndex = 0; packetIndex < sentPackets.size(); ++packetIndex )
+		{
+			CS6Packet* packet = &sentPackets[ packetIndex ];
+			if( ( GetCurrentTimeSeconds() - packet->timestamp ) > SECONDS_BEFORE_RESEND_RELIABLE_PACKETS )
+			{
+				packet->packetNumber = m_nextPacketNumber;
+				SendPacketToClient( *packet, vecIter->first, false );
+			}
+		}
 	}
 }

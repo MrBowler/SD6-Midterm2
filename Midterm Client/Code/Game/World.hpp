@@ -3,6 +3,7 @@
 #pragma once
 
 //-----------------------------------------------------------------------------------------------
+#include <set>
 #include <string>
 #include <vector>
 #include "Player.hpp"
@@ -33,8 +34,8 @@ const float SPEED_PIXELS_PER_SECOND = 100.f;
 const float DISTANCE_FROM_FLAG_FOR_PICKUP_PIXELS = 10.f;
 const float POINT_SIZE_PIXELS = 30.f;
 const float ONE_HALF_POINT_SIZE_PIXELS = POINT_SIZE_PIXELS * 0.5f;
-const double SECONDS_BEFORE_RESEND_INIT_PACKET = 0.1;
-const double SECONDS_BEFORE_SEND_UPDATE_PACKET = 0.25;
+const double SECONDS_BEFORE_RESEND_INIT_PACKET = 0.25;
+const double SECONDS_BEFORE_SEND_UPDATE_PACKET = 0.1;
 const unsigned short PORT_NUMBER = 5000;
 //const std::string IP_ADDRESS = "129.119.142.83";
 const std::string IP_ADDRESS = "127.0.0.1";
@@ -56,11 +57,13 @@ public:
 	void RenderObjects2D();
 
 private:
-	void SendPacket( const CS6Packet& pkt );
+	void SendPacket( const CS6Packet& pkt, bool requireAck );
+	void SendJoinGamePacket();
 	void ResetGame( const CS6Packet& resetPacket );
 	void UpdatePlayer( const CS6Packet& updatePacket );
 	void UpdateFromInput( const Keyboard& keyboard, const Mouse& mouse, float deltaSeconds );
 	void SendUpdate();
+	void ResendAckPackets();
 	void ReceivePackets();
 	void RenderPlayers();
 
@@ -69,9 +72,11 @@ private:
 	Texture*					m_playerTexture;
 	UDPClient					m_client;
 	bool						m_isConnectedToServer;
+	unsigned int				m_nextPacketNumber;
 	double						m_secondsSinceLastInitSend;
 	Player*						m_mainPlayer;
 	std::vector< Player* >		m_players;
+	std::vector< CS6Packet >	m_sentPackets;
 };
 
 
