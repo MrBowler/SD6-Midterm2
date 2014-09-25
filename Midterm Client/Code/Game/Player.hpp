@@ -11,13 +11,14 @@
 struct Player
 {
 	Color3b		m_color;
+	bool		m_isIt;
 	Vector2		m_currentPosition;
 	Vector2		m_lastUpdatePosition;
 	Vector2		m_gotoPosition;
 	Vector2		m_currentVelocity;
-	Vector2		m_previousVelocity;
+	Vector2		m_lastUpdateVelocity;
 	float		m_orientationDegrees;
-	float		m_secondsSinceLastUpdate;
+	double		m_timeOfLastUpdate;
 };
 
 

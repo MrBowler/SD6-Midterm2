@@ -62,7 +62,10 @@ void World::Update( float deltaSeconds, const Keyboard& keyboard, const Mouse& m
 {
 	UpdateFromInput( keyboard, mouse, deltaSeconds );
 	ReceivePackets();
+	ApplyDeadReckoning();
+	CheckForPlayerTag();
 	SendUpdate();
+	ResendAckPackets();
 }
 
 
@@ -102,7 +105,22 @@ void World::SendJoinGamePacket()
 	joinPacket.timestamp = GetCurrentTimeSeconds();
 	joinPacket.data.acknowledged.packetType = TYPE_Acknowledge;
 
-	SendPacket( joinPacket, true );
+	SendPacket( joinPacket, false );
+}
+
+
+//-----------------------------------------------------------------------------------------------
+void World::ProcessAckPackets( const CS6Packet& ackPacket )
+{
+	for( unsigned int packetIndex = 0; packetIndex < m_sentPackets.size(); ++packetIndex )
+	{
+		CS6Packet packet = m_sentPackets[ packetIndex ];
+		if( packet.packetNumber == ackPacket.data.acknowledged.packetNumber )
+		{
+			m_sentPackets.erase( m_sentPackets.begin() + packetIndex );
+			break;
+		}
+	}
 }
 
 
@@ -114,6 +132,7 @@ void World::ResetGame( const CS6Packet& resetPacket )
 	m_mainPlayer->m_color.r = resetPacket.data.reset.playerColorAndID[0];
 	m_mainPlayer->m_color.g = resetPacket.data.reset.playerColorAndID[1];
 	m_mainPlayer->m_color.b = resetPacket.data.reset.playerColorAndID[2];
+	m_mainPlayer->m_isIt = resetPacket.data.reset.isIt;
 	m_mainPlayer->m_currentPosition.x = resetPacket.data.reset.playerXPosition;
 	m_mainPlayer->m_currentPosition.y = resetPacket.data.reset.playerYPosition;
 	m_mainPlayer->m_gotoPosition = m_mainPlayer->m_currentPosition;
@@ -147,13 +166,13 @@ void World::UpdatePlayer( const CS6Packet& updatePacket )
 			if( player == m_mainPlayer )
 				return;
 
-			player->m_lastUpdatePosition = player->m_currentPosition;
-			player->m_currentPosition.x = updatePacket.data.updated.xPosition;
-			player->m_currentPosition.y = updatePacket.data.updated.yPosition;
+			player->m_lastUpdatePosition.x = updatePacket.data.updated.xPosition;
+			player->m_lastUpdatePosition.y = updatePacket.data.updated.yPosition;
+			player->m_lastUpdateVelocity = player->m_currentVelocity;
 			player->m_currentVelocity.x = updatePacket.data.updated.xVelocity;
 			player->m_currentVelocity.y = updatePacket.data.updated.yVelocity;
 			player->m_orientationDegrees = updatePacket.data.updated.yawDegrees;
-			player->m_secondsSinceLastUpdate = 0.f;
+			player->m_timeOfLastUpdate = GetCurrentTimeSeconds();
 
 			return;
 		}
@@ -169,7 +188,7 @@ void World::UpdatePlayer( const CS6Packet& updatePacket )
 	player->m_currentVelocity.x = updatePacket.data.updated.xVelocity;
 	player->m_currentVelocity.y = updatePacket.data.updated.yVelocity;
 	player->m_orientationDegrees = updatePacket.data.updated.yawDegrees;
-	player->m_secondsSinceLastUpdate = 0.f;
+	player->m_timeOfLastUpdate = GetCurrentTimeSeconds();
 
 	m_players.push_back( player );
 }
@@ -236,8 +255,15 @@ void World::UpdateFromInput( const Keyboard& keyboard, const Mouse&, float delta
 
 	velocity.Normalize();
 	m_mainPlayer->m_currentVelocity = velocity * SPEED_PIXELS_PER_SECOND;
+	if( m_mainPlayer->m_isIt )
+	{
+		m_mainPlayer->m_currentVelocity *= 0.9f;
+	}
 
 	m_mainPlayer->m_currentPosition = m_mainPlayer->m_currentPosition + m_mainPlayer->m_currentVelocity * deltaSeconds;
+
+	m_mainPlayer->m_currentPosition.x = ClampFloat( m_mainPlayer->m_currentPosition.x, 0.f, m_size.x );
+	m_mainPlayer->m_currentPosition.y = ClampFloat( m_mainPlayer->m_currentPosition.y, 0.f, m_size.y );
 }
 
 
@@ -268,6 +294,80 @@ void World::SendUpdate()
 
 
 //-----------------------------------------------------------------------------------------------
+void World::SendVictory( const Color3b& playerID )
+{
+	CS6Packet victoryPacket;
+	victoryPacket.packetNumber = m_nextPacketNumber;
+	victoryPacket.packetType = TYPE_Victory;
+	victoryPacket.playerColorAndID[0] = m_mainPlayer->m_color.r;
+	victoryPacket.playerColorAndID[1] = m_mainPlayer->m_color.g;
+	victoryPacket.playerColorAndID[2] = m_mainPlayer->m_color.b;
+	victoryPacket.timestamp = GetCurrentTimeSeconds();
+	victoryPacket.data.victorious.playerColorAndID[0] = playerID.r;
+	victoryPacket.data.victorious.playerColorAndID[1] = playerID.g;
+	victoryPacket.data.victorious.playerColorAndID[2] = playerID.b;
+
+	SendPacket( victoryPacket, true );
+}
+
+
+//-----------------------------------------------------------------------------------------------
+void World::CheckForPlayerTag()
+{
+	if( !m_mainPlayer->m_isIt )
+		return;
+
+	for( unsigned int playerIndex = 0; playerIndex < m_players.size(); ++playerIndex )
+	{
+		Player* player = m_players[ playerIndex ];
+		if( player == m_mainPlayer )
+			continue;
+
+		Vector2 positionDifference = player->m_currentPosition - m_mainPlayer->m_currentPosition;
+		float distance = positionDifference.GetLength();
+		if( distance <= 10.f )
+		{
+			SendVictory( player->m_color );
+			break;
+		}
+	}
+}
+
+
+//-----------------------------------------------------------------------------------------------
+void World::ResendAckPackets()
+{
+	for( unsigned int packetIndex = 0; packetIndex < m_sentPackets.size(); ++packetIndex )
+	{
+		CS6Packet* packet = &m_sentPackets[ packetIndex ];
+		if( ( GetCurrentTimeSeconds() - packet->timestamp ) > SECONDS_BEFORE_RESEND_INIT_PACKET )
+		{
+			packet->packetNumber = m_nextPacketNumber;
+			SendPacket( *packet, false );
+		}
+	}
+}
+
+
+//-----------------------------------------------------------------------------------------------
+void World::ApplyDeadReckoning()
+{
+	for( unsigned int playerIndex = 0; playerIndex < m_players.size(); ++playerIndex )
+	{
+		Player* player = m_players[ playerIndex ];
+		if( player == m_mainPlayer )
+			continue;
+
+		float deltaSeconds = (float) ( GetCurrentTimeSeconds() - player->m_timeOfLastUpdate );
+		player->m_currentPosition = player->m_lastUpdatePosition + player->m_currentVelocity * deltaSeconds;
+
+		player->m_currentPosition.x = ClampFloat( player->m_currentPosition.x, 0.f, m_size.x );
+		player->m_currentPosition.y = ClampFloat( player->m_currentPosition.y, 0.f, m_size.y );
+	}
+}
+
+
+//-----------------------------------------------------------------------------------------------
 void World::ReceivePackets()
 {
 	CS6Packet packet;
@@ -290,6 +390,10 @@ void World::ReceivePackets()
 		else if( orderedPacket.packetType == TYPE_Reset )
 		{
 			ResetGame( orderedPacket );
+		}
+		else if( orderedPacket.packetType == TYPE_Acknowledge )
+		{
+			ProcessAckPackets( orderedPacket );
 		}
 	}
 }

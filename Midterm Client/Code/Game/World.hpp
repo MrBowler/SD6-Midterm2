@@ -59,11 +59,15 @@ public:
 private:
 	void SendPacket( const CS6Packet& pkt, bool requireAck );
 	void SendJoinGamePacket();
+	void ProcessAckPackets( const CS6Packet& ackPacket );
 	void ResetGame( const CS6Packet& resetPacket );
 	void UpdatePlayer( const CS6Packet& updatePacket );
 	void UpdateFromInput( const Keyboard& keyboard, const Mouse& mouse, float deltaSeconds );
 	void SendUpdate();
+	void SendVictory( const Color3b& playerID );
+	void CheckForPlayerTag();
 	void ResendAckPackets();
+	void ApplyDeadReckoning();
 	void ReceivePackets();
 	void RenderPlayers();
 

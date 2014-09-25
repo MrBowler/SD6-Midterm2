@@ -41,8 +41,10 @@ private:
 	Color3b GetPlayerColorForID( unsigned int playerID );
 	Vector2 GetPlayerPosition( const Color3b& playerID );
 	Vector2 GetRandomPosition();
+	bool IsThisPlayerIt( const Player* player );
 	void ProcessAckPackets( const CS6Packet& ackPacket, const ClientInfo& info );
 	void AddPlayer( const ClientInfo& info );
+	void ResetGame( const CS6Packet& victoryPacket, const ClientInfo& info );
 	void UpdatePlayer( const CS6Packet& updatePacket, const ClientInfo& info );
 	void SendUpdatesToClients();
 	void GetPackets();

@@ -128,6 +128,21 @@ Vector2 GameServer::GetRandomPosition()
 
 
 //-----------------------------------------------------------------------------------------------
+bool GameServer::IsThisPlayerIt( const Player* player )
+{
+	std::map< ClientInfo, Player* >::iterator playerIter;
+	for( playerIter = m_players.begin(); playerIter != m_players.end(); ++playerIter )
+	{
+		Player* checkPlayer = playerIter->second;
+		if( player != checkPlayer && checkPlayer->m_isIt )
+			return false;
+	}
+
+	return true;
+}
+
+
+//-----------------------------------------------------------------------------------------------
 void GameServer::ProcessAckPackets( const CS6Packet& ackPacket, const ClientInfo& info )
 {
 	if( ackPacket.data.acknowledged.packetType == TYPE_Acknowledge )
@@ -172,6 +187,7 @@ void GameServer::AddPlayer( const ClientInfo& info )
 	player->m_position = GetPlayerPosition( player->m_color );
 	player->m_velocity = Vector2( 0.f, 0.f );
 	player->m_orientationDegrees = 0.f;
+	player->m_isIt = IsThisPlayerIt( player );
 	player->m_lastUpdateTime = GetCurrentTimeSeconds();
 
 	m_players[ info ] = player;
@@ -183,6 +199,7 @@ void GameServer::AddPlayer( const ClientInfo& info )
 	resetPacket.playerColorAndID[1] = player->m_color.g;
 	resetPacket.playerColorAndID[2] = player->m_color.b;
 	resetPacket.timestamp = GetCurrentTimeSeconds();
+	resetPacket.data.reset.isIt = player->m_isIt;
 	resetPacket.data.reset.playerXPosition = player->m_position.x;
 	resetPacket.data.reset.playerYPosition = player->m_position.y;
 	resetPacket.data.reset.playerColorAndID[0] = player->m_color.r;
@@ -190,6 +207,53 @@ void GameServer::AddPlayer( const ClientInfo& info )
 	resetPacket.data.reset.playerColorAndID[2] = player->m_color.b;
 
 	SendPacketToClient( resetPacket, info, true );
+}
+
+
+//-----------------------------------------------------------------------------------------------
+void GameServer::ResetGame( const CS6Packet& victoryPacket, const ClientInfo& info )
+{
+	CS6Packet ackPacket;
+	ackPacket.packetNumber = m_nextPacketNumber;
+	ackPacket.packetType = TYPE_Acknowledge;
+	ackPacket.timestamp = GetCurrentTimeSeconds();
+	ackPacket.data.acknowledged.packetNumber = victoryPacket.packetNumber;
+	ackPacket.data.acknowledged.packetType = TYPE_Victory;
+
+	SendPacketToClient( ackPacket, info, false );
+
+	std::map< ClientInfo, Player* >::iterator playerIter;
+	for( playerIter = m_players.begin(); playerIter != m_players.end(); ++playerIter )
+	{
+		Player* player = playerIter->second;
+		Vector2 resetPlayerPos = GetPlayerPosition( player->m_color );
+
+		CS6Packet resetPacket;
+		resetPacket.packetNumber = m_nextPacketNumber;
+		resetPacket.packetType = TYPE_Reset;
+		resetPacket.playerColorAndID[0] = player->m_color.r;
+		resetPacket.playerColorAndID[1] = player->m_color.g;
+		resetPacket.playerColorAndID[2] = player->m_color.b;
+		resetPacket.timestamp = GetCurrentTimeSeconds();
+		resetPacket.data.reset.playerColorAndID[0] = player->m_color.r;
+		resetPacket.data.reset.playerColorAndID[1] = player->m_color.g;
+		resetPacket.data.reset.playerColorAndID[2] = player->m_color.b;
+		resetPacket.data.reset.playerXPosition = resetPlayerPos.x;
+		resetPacket.data.reset.playerYPosition = resetPlayerPos.y;
+
+		if( victoryPacket.data.victorious.playerColorAndID[0] == player->m_color.r
+			&& victoryPacket.data.victorious.playerColorAndID[1] == player->m_color.g
+			&& victoryPacket.data.victorious.playerColorAndID[2] == player->m_color.b )
+		{
+			resetPacket.data.reset.isIt = true;
+		}
+		else
+		{
+			resetPacket.data.reset.isIt = false;
+		}
+
+		SendPacketToClient( resetPacket, playerIter->first, true );
+	}
 }
 
 
@@ -272,6 +336,10 @@ void GameServer::GetPackets()
 		else if( orderedPacket.packetType == TYPE_Update )
 		{
 			UpdatePlayer( orderedPacket, info );
+		}
+		else if( orderedPacket.packetType == TYPE_Victory )
+		{
+			ResetGame( orderedPacket, info );
 		}
 	}
 }
